@@ -1,0 +1,167 @@
+import tkinter as tk
+from PIL import Image, ImageTk, ImageSequence
+import os
+import random
+import datetime
+import threading
+
+# 🗂️ Folder containing all your pet gifs
+impath = r'C:\Users\109017\Desktop\Project\Buddy\image\\'
+
+# 🧠 Define all animations and how many frames to load
+animations = {
+    'idle': ('idle.gif', 5),
+    'angry': ('angry.gif', 4),
+    'walk_left': ('walking_positive.gif', 8),
+    'walk_right': ('walking_negative.gif', 8),
+    'idle_to_sleep': ('idle_to_sleep.gif', 8),
+    'sleep': ('sleep.gif', 3),
+    'sleep_to_idle': ('sleep_to_idle.gif', 8),
+}
+
+# 🎬 Load frames from gif
+def load_gif_frames(filename, frame_count):
+    frames = []
+    path = os.path.join(impath, filename)
+    try:
+        im = Image.open(path)
+        for frame in ImageSequence.Iterator(im):
+            frame = frame.convert("RGBA")
+            new_frame = Image.new("RGBA", frame.size, (255, 0, 255, 0))  # transparent bg
+            new_frame.paste(frame, (0, 0), frame)
+            frames.append(ImageTk.PhotoImage(new_frame))
+            if len(frames) >= frame_count:
+                break
+    except Exception as e:
+        print(f"Error loading {filename}:", e)
+    return frames
+
+class Buddy:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.overrideredirect(True)
+        self.root.wm_attributes("-topmost", True)
+        self.root.wm_attributes("-transparentcolor", "pink")
+        self.root.configure(bg="pink")
+
+        self.label = tk.Label(self.root, bd=0, bg='pink')
+        self.label.pack()
+
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+
+        self.pet_width = 100
+        self.pet_height = 100
+
+        self.x = 600
+        self.y = self.screen_height - self.pet_height
+
+        # 🔁 Load all animation frames
+        self.actions = {name: load_gif_frames(gif, count) for name, (gif, count) in animations.items()}
+        self.current_action = 'idle'
+        self.frames = self.actions[self.current_action]
+        self.frame_index = 0
+
+        # Drag
+        self.dragging = False
+        self.label.bind("<Button-1>", self.start_drag)
+        self.label.bind("<B1-Motion>", self.do_drag)
+        self.label.bind("<ButtonRelease-1>", self.stop_drag)
+
+        self.root.geometry(f"{self.pet_width}x{self.pet_height}+{self.x}+{self.y}")
+        self.animate()
+
+        self.start_reminder_threads()
+        self.random_action_loop()
+        self.root.mainloop()
+
+    def animate(self):
+        if self.frames:
+            self.label.config(image=self.frames[self.frame_index])
+            self.frame_index = (self.frame_index + 1) % len(self.frames)
+
+            if self.current_action == 'walk_left':
+                self.x -= 3
+            elif self.current_action == 'walk_right':
+                self.x += 3
+
+            self.x = max(0, min(self.screen_width - self.pet_width, self.x))
+            self.root.geometry(f"{self.pet_width}x{self.pet_height}+{self.x}+{self.y}")
+
+        self.root.after(100, self.animate)
+
+    def switch_action(self, name, duration=1000):
+        if name in self.actions:
+            self.current_action = name
+            self.frames = self.actions[name]
+            self.frame_index = 0
+            if name not in ['sleep', 'idle']:  # switch back to idle after short actions
+                self.root.after(duration, lambda: self.switch_action('idle'))
+
+    def start_drag(self, event):
+        self.dragging = True
+        self.offset_x = event.x
+        self.offset_y = event.y
+
+    def do_drag(self, event):
+        if self.dragging:
+            self.x = event.x_root - self.offset_x
+            self.y = event.y_root - self.offset_y
+            self.root.geometry(f"{self.pet_width}x{self.pet_height}+{self.x}+{self.y}")
+
+    def stop_drag(self, event):
+        self.dragging = False
+        self.switch_action("angry", duration=1500)
+
+    def show_popup(self, text):
+        popup = tk.Toplevel()
+        popup.overrideredirect(True)
+        popup.configure(bg="#ffffcc")
+        popup.attributes("-topmost", True)
+        x = self.x + self.pet_width // 2
+        y = self.y - 40
+        popup.geometry(f"+{x}+{y}")
+        label = tk.Label(popup, text=text, font=("Segoe UI", 10), bg="#ffffcc", bd=2, relief="solid", padx=10, pady=5)
+        label.pack()
+        label.bind("<Button-1>", lambda e: popup.destroy())
+
+    def start_reminder_threads(self):
+        threading.Thread(target=self.meow_loop, daemon=True).start()
+        threading.Thread(target=self.hourly_loop, daemon=True).start()
+        threading.Thread(target=self.daily_reminder_loop, daemon=True).start()
+
+    def meow_loop(self):
+        while True:
+            self.show_popup("Meow 🐱")
+            threading.Event().wait(60 * 20)  # every 20 mins
+
+    def hourly_loop(self):
+        while True:
+            now = datetime.datetime.now()
+            next_hour = (now + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            delay = (next_hour - now).total_seconds()
+            threading.Event().wait(delay)
+            self.show_popup("💧 Drink water! It has been 1 hour")
+
+    def daily_reminder_loop(self):
+        while True:
+            now = datetime.datetime.now().strftime("%H:%M")
+            if now == "12:45":
+                self.show_popup("🍱 It's your lunch time")
+            elif now == "17:30":
+                self.show_popup("🎮 It's play time")
+            threading.Event().wait(60)
+
+    def random_action_loop(self):
+        def choose():
+            if self.current_action not in ['angry', 'sleep']:
+                actions = ['idle', 'walk_left', 'walk_right', 'idle_to_sleep', 'sleep', 'sleep_to_idle']
+                # Assign higher weights to walking actions
+                weights = [1, 5, 5, 1, 1, 1] # Example: walk actions are 3 times more likely than idle/sleep
+                choice = random.choices(actions, weights=weights, k=1)[0]
+                self.switch_action(choice)
+            self.root.after(random.randint(3000, 8000), choose)
+        choose()
+
+if __name__ == "__main__":
+    Buddy()
